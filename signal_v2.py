@@ -2,6 +2,7 @@ import ast
 import inspect
 import math
 import random
+import copy
 
 
 class Signal:
@@ -32,8 +33,9 @@ class Signal:
 
 	def drive(self, func, args=None, clock=True):
 		self.func = func
-		self.args = args
 		self.clock = clock
+		if args:
+			self.args = list(args)
 
 	def __str__(self):
 		return str(self.current_val)
@@ -88,6 +90,26 @@ class MathOperation:
 		return str(self.val1) + " " + self.operation + " " + str(self.val2)
 
 
+comparator_count = 1
+
+
+class CompareOperator:
+	derived_count = 1
+
+	def __init__(self, nodes, comparators):
+		self.nodes = nodes
+		self.comparators = comparators
+		global comparator_count
+		self.result = Signal(1, name="comparator_"+str(comparator_count))
+		comparator_count += 1
+
+	def __str__(self):
+		node_pairs = [(str(self.nodes[x]), str(self.nodes[x+1])) for x in range(len(self.nodes)-1)]
+		ast_to_vhdl = {ast.Eq: " = "}
+		comparisons = [node_pairs[x][0] + ast_to_vhdl[type(self.comparators[x])] + node_pairs[x][1] for x in range(len(node_pairs))]
+		return "\"1\" when " +" and ".join(comparisons) + " else \"0\";"
+
+
 def generate_header(signals):
 	io_signals = list(filter(lambda x: x.type in ["in", "out"], signals))
 	io_texts = [x.name + " : " + x.type + " std_logic_vector(0 to " + str(x.size-1) + ")" for x in io_signals]
@@ -120,7 +142,7 @@ def get_all_entity_signals(*nodes):
 	return seen_signals
 
 
-def to_direct_assignment(new_val):
+def to_string(new_val):
 	if type(new_val) is str:
 		return '"' + new_val + '"'
 	elif type(new_val) is int:
@@ -135,18 +157,22 @@ def to_direct_assignment(new_val):
 		raise Exception("Direct assignment bad value: " + str(new_val))
 
 
-def get_driving_indexes(signal):
-	tree = ast.parse(inspect.getsource(signal.func))
-	all_input_signals = [x.id for x in tree.body[0].args.args]
-	driving_signals = []
-	for node in ast.walk(tree):
+def get_driving_signals(top_node, signal, derived_signals):
+	all_input_signals = [x.id for x in top_node.body[0].args.args]
+	driving_names = []
+	for node in ast.walk(top_node):
 		if isinstance(node, ast.If):
 			for subnode in ast.walk(node.test):
 				if isinstance(subnode, ast.Name):
 					if subnode.id in all_input_signals:
-						driving_signals.append(subnode.id)
-	indexes = sorted([all_input_signals.index(x) for x in driving_signals])
-	return indexes
+						driving_names.append(subnode.id)
+	driving_signals = []
+	for signal_name in driving_names:
+		if signal_name[:9] == "derived_":
+			driving_signals.append(derived_signals[int(signal_name[9+len(signal.name):])-1])
+		else:
+			driving_signals.append(signal.args[all_input_signals.index(signal_name)])
+	return driving_signals
 
 
 def match_widths(some_string, some_object):
@@ -172,42 +198,106 @@ def get_lut(destination, driving_signals):
 	return lut
 
 
-def get_logic(driven, driving_indexes):
-	driving_signals = [driven.args[x] for x in driving_indexes]
+def get_logic(driven, driving_signals):
 	lut = get_lut(driven, driving_signals)
 	text = "case(" + " & ".join([x.name for x in driving_signals]) + ") is\n"
 	for each in lut.keys():
 		if each != None:
 			for input in lut[each]:
-				text += "when \"" + "".join(input) + "\" => " + driven.name + " <= " + to_direct_assignment(each) + ";\n"
+				text += "when \"" + "".join(input) + "\" => " + driven.name + " <= " + to_string(each) + ";\n"
+	text += "when others => pass;\n"
 	text += "end case;\n"
 	return text
 
 
-def identity(*args):
-	return "000"
+def node_replace(original, replace_dict):
+	for node in ast.walk(original):
+		if isinstance(node, ast.Name):
+			if node.id in replace_dict.keys():
+				node.id = replace_dict[node.id]
 
 
-def change_return_logic(signal):
-	return_nodes = []
-	tree = ast.parse(inspect.getsource(signal.func))
-	func_name = tree.body[0].name
-	for node in ast.walk(tree):
-		if isinstance(node, ast.Return):
-			return_nodes.append(node)
+def replace_with_operator(node):
+	for subnode in ast.walk(node):
+		try:
+			if subnode.id == 'int':
+				subnode.id = 'do_int'
+			elif subnode.id == 'str':
+				subnode.id = 'do_str'
+			elif subnode.id == 'bin':
+				subnode.id = 'do_bin'
+		except:
+			pass
+
+
+derived_count = 1
+def optimize_compares(top_node, signal):
+	"""
+	For each comparison node:
+		Makes a temporary copy and evaluates both sides
+		Creates a new CompareOperator, adds it to the CompareOperator.array
+		Replaces the ast.Compare contents with left: call to bool(signal from CompareOperator.array), op: eq(), right: True
+	return all CompareOperator signals
+
+	:param top_node:
+	:param replace_dict:
+	:return:
+	"""
+	func_args = [x.id for x in top_node.body[0].args.args]
+	replace_dict = dict([(func_args[x], signal.args[x].name) for x in range(len(func_args))])
+
+	derived_signals = []
+	compare_nodes = list(filter(lambda x: isinstance(x, ast.Compare), ast.walk(top_node)))
+	for node in compare_nodes:
+		compares = copy.deepcopy([node.left] + node.comparators)
+		for x in range(len(compares)):
+			node_replace(compares[x], replace_dict)
+			replace_with_operator(compares[x])
+			compares[x] = eval(compile(ast.Expression(compares[x]), filename="<ast>", mode="eval"))
+		new_signal_id = len(derived_signals)+1
+		new_signal_name = "derived_" + signal.name + "_" + str(new_signal_id)
+		new_signal = Signal(1, name=new_signal_name)
+		new_signal.drive(CompareOperator(compares, node.ops))
+		derived_signals.append(new_signal)
+		signal.args.append(new_signal)
+		node.left = ast.Call(func=ast.Name(id='int', ctx=ast.Load()), args=[ast.Name(id=new_signal_name, ctx=ast.Load())], keywords=[], starargs=None, kwargs=None)
+		node.ops = [ast.Eq()]
+		node.comparators = [ast.Num(n=1)]
+		top_node.body[0].args.args.append(ast.Name(id=new_signal_name, ctx=ast.Param()))
+	ast.fix_missing_locations(top_node)
+	return derived_signals
+
+
+def optimize_returns(top_node):
+	return_nodes = list(filter(lambda x: isinstance(x, ast.Return), ast.walk(top_node)))
 	for node in return_nodes:
-		for subnode in ast.walk(node):
-			try:
-				if subnode.id == 'int':
-					subnode.id = 'do_int'
-				elif subnode.id == 'str':
-					subnode.id = 'do_str'
-				elif subnode.id == 'bin':
-					subnode.id = 'do_bin'
-			except:
-				pass
-	exec(compile(tree, filename="<ast>", mode="exec"))
+		replace_with_operator(node)
+
+
+def compare_logic(signal):
+	return signal.name + " <= " + str(signal.func)
+
+
+def ast_magic(signal):
+	"""
+	Takes in a driven signal
+	Parses the driving function into an ast
+	Find all ast.Compare, generates derived_signals, swaps comparisons for derived_signals
+	Find all ast.Return, swaps
+	Saves new function
+	Find and return all non-comparison, free LUT inputs
+
+	:param signal: A driven Signal.
+	:return: (derived_signals, lut)
+	"""
+	top_node = ast.parse(inspect.getsource(signal.func))
+	derived_signals = optimize_compares(top_node, signal)
+	optimize_returns(top_node)
+	exec(compile(top_node, filename="<ast>", mode="exec"))
+	func_name = top_node.body[0].name
 	signal.func = (eval(func_name))
+	driving_signals = get_driving_signals(top_node, signal, derived_signals)
+	return [compare_logic(x) for x in derived_signals], get_logic(signal, driving_signals)
 
 
 def indent(in_text):
@@ -227,13 +317,6 @@ def indent(in_text):
 			level += 1
 	return "\n".join(out_text)
 
-def generate_return(node, arg_mappings):
-	pass
-
-
-def generate_logic(node, arg_mappings):
-	print(ast.dump(node))
-
 
 def generate_vhdl(*nodes):
 	entity_signals = get_all_entity_signals(nodes)
@@ -242,30 +325,24 @@ def generate_vhdl(*nodes):
 	print("Header complete")
 	for signal in entity_signals:
 		if signal.type != "in":
-			if signal.clock:
-				text += "process(clock) is\n"
-				text += "if rising_edge(clock) then\n"
 			if signal.args:
-				tree = ast.parse(inspect.getsource(signal.func))
-				arg_names = [x.id for x in tree.body[0].args.args]
-				arg_mappings = {arg_names[x]: signal.args[x].name for x in range(len(arg_names))}
-				generate_logic(tree.body[0], arg_mappings)
-				print arg_mappings
-				driving_indexes = get_driving_indexes(signal)
-				change_return_logic(signal)
-				text += get_logic(signal, driving_indexes)
+				derived, original = ast_magic(signal)
+				for each in derived:
+					text += each + "\n"
+				if signal.clock:
+					text += "process(clock) is\n"
+					text += "if rising_edge(clock) then\n"
+				text += original
+				if signal.clock:
+					text += "end if;\n"
+					text += "end process;\n"
 			else:
 				if signal.func:
-					text += signal.name + " <= " + to_direct_assignment(signal.func) + ";\n"
+					text += signal.name + " <= " + to_string(signal.func) + ";\n"
 			print("Signal " + signal.name + " complete")
-			if signal.clock:
-				text += "end if;\n"
-				text += "end process;\n"
 			text += "\n"
 	text += "end generated_arch;"
 	text = indent(text)
-	print("")
-	print(text)
 	return text
 
 
@@ -298,7 +375,7 @@ request_y.drive(200)
 
 
 def camera_pos(current, increment, clear):
-	if int(clear) == 1:
+	if int(clear) == '1':
 		return 0
 	elif int(increment) == 1:
 		return int(current) + 1
@@ -310,17 +387,18 @@ camera_x.drive(camera_pos, args=(camera_x, new_pixel, new_line))
 camera_y.drive(camera_pos, args=(camera_y, new_line, new_frame))
 
 
-def latch(request_x, request_y, current_x, current_y, current_data):
-	if int(request_x) == int(current_x) and int(request_y) == int(current_y):
-		return current_data
+def latch(request_x, request_y, camera_x, camera_y, current_data):
+	if int(request_x) == int(camera_x) and int(request_y) == int(camera_y):
+		return int(current_data)
 
-response.drive(latch, args=(request_x, request_y, camera_x, camera_y, new_data), clock=False)
+
+response.drive(latch, args=(request_x, request_y, camera_x, camera_y, new_data))
 
 response.io("p11")
 new_data.io(["p"+str(x) for x in range(8)])
 new_pixel.io("p8")
 new_line.io("p9")
 new_frame.io("p10")
-generate_vhdl(response)
+print(generate_vhdl(response))
 print("")
 print(generate_ucf(50, response))
