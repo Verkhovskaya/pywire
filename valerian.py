@@ -5,21 +5,28 @@ import random
 import copy
 
 
-class Signal:
-	signal_count = 1
+"""
+General code structure:
 
-	def __init__(self, bit_size, type="lut", name=None):
-		bit_size = int(bit_size)
+Signal class (Data storage for library access)
+Several Operator classes
+
+
+"""
+
+
+class Signal:
+	all_signals = []
+
+	def __init__(self, bit_size, type="lut"):
 		self.size = int(bit_size)
 		self.type = type
-		if name:
-			self.name = name
-		else:
-			self.name = "gen_" + str(self.signal_count)
-			self.signal_count += 1
+		self.name = None
+		self.index = len(self.all_signals)
+		self.all_signals.append(self)
 
 		self.func = None
-		self.args = None
+		self.driving_signals = None
 		self.clock = None
 		self.map = None
 
@@ -35,7 +42,7 @@ class Signal:
 		self.func = func
 		self.clock = clock
 		if args:
-			self.args = list(args)
+			self.driving_signals = list(args)
 
 	def __str__(self):
 		return str(self.current_val)
@@ -43,8 +50,8 @@ class Signal:
 	def __int__(self):
 		return int(self.current_val, 2)
 
-	def __bool__(self):
-		return self.current_val == "1"
+	def __nonzero__(self):
+		return str(self.current_val) == "1"
 
 	def __len__(self):
 		return self.size
@@ -91,55 +98,22 @@ class MathOperation:
 
 
 comparator_count = 1
-
-
-class CompareOperator:
+class CompareOperation:
 	derived_count = 1
 
 	def __init__(self, nodes, comparators):
 		self.nodes = nodes
 		self.comparators = comparators
 		global comparator_count
-		self.result = Signal(1, name="comparator_"+str(comparator_count))
+		self.result = Signal(1)
+		self.result.name = "comparator_"+str(comparator_count)
 		comparator_count += 1
 
 	def __str__(self):
 		node_pairs = [(str(self.nodes[x]), str(self.nodes[x+1])) for x in range(len(self.nodes)-1)]
 		ast_to_vhdl = {ast.Eq: " = "}
 		comparisons = [node_pairs[x][0] + ast_to_vhdl[type(self.comparators[x])] + node_pairs[x][1] for x in range(len(node_pairs))]
-		return "\"1\" when " +" and ".join(comparisons) + " else \"0\";"
-
-
-def generate_header(signals):
-	io_signals = list(filter(lambda x: x.type in ["in", "out"], signals))
-	io_texts = [x.name + " : " + x.type + " std_logic_vector(0 to " + str(x.size-1) + ")" for x in io_signals]
-	text = "library ieee;\n"
-	text += "use ieee.std_logic_1164.all;\n\n"
-	text += "entity generated is\n"
-	text += "port(\n"
-	text += ";\n".join(["clock : in std_logic"]+io_texts)
-	text += ");\n"
-	text += "end entity;\n\n"
-	return text
-
-
-def get_all_entity_signals(*nodes):
-	if type(nodes) is not list:
-		if type(nodes) is tuple:
-			nodes = list(*nodes)
-		else:
-			nodes = [nodes]
-	unseen_signals = nodes
-	seen_signals = []
-	while unseen_signals:
-		current = unseen_signals.pop()
-		seen_signals.append(current)
-		if current.args:
-			for drive_input in current.args:
-				if isinstance(drive_input, Signal):
-					if drive_input not in seen_signals:
-						unseen_signals.append(drive_input)
-	return seen_signals
+		return "\"1\" when " + " and ".join(comparisons) + " else \"0\";"
 
 
 def to_string(new_val):
@@ -157,7 +131,43 @@ def to_string(new_val):
 		raise Exception("Direct assignment bad value: " + str(new_val))
 
 
-def get_driving_signals(top_node, signal, derived_signals):
+def generate_header(signals):
+	io_signals = list(filter(lambda x: x.type in ["in", "out"], signals))
+	io_texts = [x.name + " : " + x.type + " std_logic_vector(0 to " + str(x.size-1) + ")" for x in io_signals]
+	text = "library ieee;\n"
+	text += "use ieee.std_logic_1164.all;\n\n"
+	text += "entity generated is\n"
+	text += "port(\n"
+	text += ";\n".join(["clock : in std_logic"]+io_texts)
+	text += ");\n"
+	text += "end entity;\n\n"
+	return text
+
+
+def to_list(args):
+	if type(args) is list:
+		return args
+	elif type(args) is tuple:
+		return list(*args)
+	else:
+		return [args]
+
+
+def get_all_entity_signals(*nodes):
+	unseen_signals = to_list(nodes)
+	seen_signals = []
+	while unseen_signals:
+		current = unseen_signals.pop()
+		seen_signals.append(current)
+		if current.driving_signals:
+			for drive_input in current.driving_signals:
+				if isinstance(drive_input, Signal):
+					if drive_input not in seen_signals:
+						unseen_signals.append(drive_input)
+	return seen_signals
+
+
+def get_driving_signals(top_node, signal, compare_signals):
 	all_input_signals = [x.id for x in top_node.body[0].args.args]
 	driving_names = []
 	for node in ast.walk(top_node):
@@ -168,10 +178,10 @@ def get_driving_signals(top_node, signal, derived_signals):
 						driving_names.append(subnode.id)
 	driving_signals = []
 	for signal_name in driving_names:
-		if signal_name[:9] == "derived_":
-			driving_signals.append(derived_signals[int(signal_name[9+len(signal.name):])-1])
+		if signal_name[:9] == "compare_":
+			driving_signals.append(compare_signals[int(signal_name[9+len(signal.name):])-1])
 		else:
-			driving_signals.append(signal.args[all_input_signals.index(signal_name)])
+			driving_signals.append(signal.driving_signals[all_input_signals.index(signal_name)])
 	return driving_signals
 
 
@@ -190,7 +200,7 @@ def get_lut(destination, driving_signals):
 		func_input_line = match_widths(bin(i)[2:].zfill(total_width), driving_signals)
 		for j in range(len(driving_signals)):
 			driving_signals[j].current_val = func_input_line[j]
-		func_output = destination.func(*destination.args)
+		func_output = destination.func(*destination.driving_signals)
 		if func_output not in lut.keys():
 			lut[func_output] = [func_input_line]
 		else:
@@ -231,41 +241,31 @@ def replace_with_operator(node):
 
 
 derived_count = 1
-def optimize_compares(top_node, signal):
-	"""
-	For each comparison node:
-		Makes a temporary copy and evaluates both sides
-		Creates a new CompareOperator, adds it to the CompareOperator.array
-		Replaces the ast.Compare contents with left: call to bool(signal from CompareOperator.array), op: eq(), right: True
-	return all CompareOperator signals
-
-	:param top_node:
-	:param replace_dict:
-	:return:
-	"""
+def optimize_compare_vals(top_node, signal):
 	func_args = [x.id for x in top_node.body[0].args.args]
-	replace_dict = dict([(func_args[x], signal.args[x].name) for x in range(len(func_args))])
+	replace_dict = dict([(func_args[x], signal.driving_signals[x].name) for x in range(len(func_args))])
 
-	derived_signals = []
+	compare_signals = []
 	compare_nodes = list(filter(lambda x: isinstance(x, ast.Compare), ast.walk(top_node)))
 	for node in compare_nodes:
-		compares = copy.deepcopy([node.left] + node.comparators)
-		for x in range(len(compares)):
-			node_replace(compares[x], replace_dict)
-			replace_with_operator(compares[x])
-			compares[x] = eval(compile(ast.Expression(compares[x]), filename="<ast>", mode="eval"))
-		new_signal_id = len(derived_signals)+1
-		new_signal_name = "derived_" + signal.name + "_" + str(new_signal_id)
-		new_signal = Signal(1, name=new_signal_name)
-		new_signal.drive(CompareOperator(compares, node.ops))
-		derived_signals.append(new_signal)
-		signal.args.append(new_signal)
+		compare_vals = copy.deepcopy([node.left] + node.comparators)
+		for x in range(len(compare_vals)):
+			node_replace(compare_vals[x], replace_dict)
+			replace_with_operator(compare_vals[x])
+			compare_vals[x] = eval(compile(ast.Expression(compare_vals[x]), filename="<ast>", mode="eval"))
+		new_signal_id = len(compare_signals)+1
+		new_signal_name = "compare_" + signal.name + "_" + str(new_signal_id)
+		new_signal = Signal(1)
+		new_signal.name= new_signal_name
+		new_signal.drive(CompareOperation(compare_vals, node.ops))
+		compare_signals.append(new_signal)
+		signal.driving_signals.append(new_signal)
 		node.left = ast.Call(func=ast.Name(id='int', ctx=ast.Load()), args=[ast.Name(id=new_signal_name, ctx=ast.Load())], keywords=[], starargs=None, kwargs=None)
 		node.ops = [ast.Eq()]
 		node.comparators = [ast.Num(n=1)]
 		top_node.body[0].args.args.append(ast.Name(id=new_signal_name, ctx=ast.Param()))
 	ast.fix_missing_locations(top_node)
-	return derived_signals
+	return compare_signals
 
 
 def optimize_returns(top_node):
@@ -282,22 +282,24 @@ def ast_magic(signal):
 	"""
 	Takes in a driven signal
 	Parses the driving function into an ast
-	Find all ast.Compare, generates derived_signals, swaps comparisons for derived_signals
-	Find all ast.Return, swaps
+	Find all ast.Compare, generates compare_signals, swaps comparisons for compare_signals
+	Find all ast.Return, swaps int(), bool() and str() to to_int(), to_bool and to_str(), changing returns to BinOperators
+	Fixes function namespace
 	Saves new function
 	Find and return all non-comparison, free LUT inputs
 
 	:param signal: A driven Signal.
-	:return: (derived_signals, lut)
+	:return: (compare_signals, lut)
 	"""
 	top_node = ast.parse(inspect.getsource(signal.func))
-	derived_signals = optimize_compares(top_node, signal)
+	print(ast.dump(top_node))
+	compare_signals = optimize_compare_vals(top_node, signal)
 	optimize_returns(top_node)
 	exec(compile(top_node, filename="<ast>", mode="exec"))
 	func_name = top_node.body[0].name
 	signal.func = (eval(func_name))
-	driving_signals = get_driving_signals(top_node, signal, derived_signals)
-	return [compare_logic(x) for x in derived_signals], get_logic(signal, driving_signals)
+	driving_signals = get_driving_signals(top_node, signal, compare_signals)
+	return [compare_logic(x) for x in compare_signals], get_logic(signal, driving_signals)
 
 
 def indent(in_text):
@@ -318,16 +320,34 @@ def indent(in_text):
 	return "\n".join(out_text)
 
 
-def generate_vhdl(*nodes):
+def get_name(nodes):
+	for each in nodes:
+		try:
+			each.name = ([k for k, v in globals().iteritems() if v is each][0])
+		except:
+			x = 1
+			while True:
+				if "signal_" + str(x) not in globals().keys():
+					each.name = "signal_"+str(x)
+					globals()["signal_"+str(x)] = each
+					break
+				x += 1
+
+
+def generate_vhdl(code_globals, *nodes):
+	for each in code_globals:
+		if each not in globals().keys():
+			globals()[each] = code_globals[each]
 	entity_signals = get_all_entity_signals(nodes)
+	get_name(entity_signals)
 	text = generate_header(entity_signals)
 	text += "architecture generated_arch of generated is\n\n"
 	print("Header complete")
 	for signal in entity_signals:
 		if signal.type != "in":
-			if signal.args:
-				derived, original = ast_magic(signal)
-				for each in derived:
+			if signal.driving_signals:
+				compares, original = ast_magic(signal)
+				for each in compares:
 					text += each + "\n"
 				if signal.clock:
 					text += "process(clock) is\n"
@@ -355,50 +375,3 @@ def generate_ucf(frequency, *nodes):
 			for x in range(len(signal.map)):
 				text += 'NET ' + signal.name + '<' + str(x) + '> LOC = ' + signal.map[x] + ' | IOSTANDARD = LVTTL;\n'
 	return text
-
-
-new_data = Signal(8, type="in", name="new_data") # 8 bit RGB data coming from the camera
-new_line = Signal(1, type="in", name="new_line")  # New line trigger coming from camera
-new_frame = Signal(1, type="in", name="new_frame") # New frame trigger coming from camera
-new_pixel = Signal(1, type="in", name="new_pixel") # New pixel trigger coming from camera
-
-camera_x = Signal(4, name="camera_x") # Derived from new_frame, new_line
-camera_y = Signal(4, name="camera_y") # Derived from new_line, new_pixel
-
-request_x = Signal(4, name="request_x")
-request_y = Signal(4, name="request_y")
-response = Signal(8, type="out", name="response")
-
-
-request_x.drive(430)
-request_y.drive(200)
-
-
-def camera_pos(current, increment, clear):
-	if int(clear) == '1':
-		return 0
-	elif int(increment) == 1:
-		return int(current) + 1
-	else:
-		return int(current)
-
-
-camera_x.drive(camera_pos, args=(camera_x, new_pixel, new_line))
-camera_y.drive(camera_pos, args=(camera_y, new_line, new_frame))
-
-
-def latch(request_x, request_y, camera_x, camera_y, current_data):
-	if int(request_x) == int(camera_x) and int(request_y) == int(camera_y):
-		return int(current_data)
-
-
-response.drive(latch, args=(request_x, request_y, camera_x, camera_y, new_data))
-
-response.io("p11")
-new_data.io(["p"+str(x) for x in range(8)])
-new_pixel.io("p8")
-new_line.io("p9")
-new_frame.io("p10")
-print(generate_vhdl(response))
-print("")
-print(generate_ucf(50, response))
