@@ -44,6 +44,8 @@ class Signal:
 		self.size = int(bit_size)
 		self.io = io
 		self.name = name
+		if name is not None:
+			globals()[name] = self
 		self.index = len(self.all_signals)
 		self.all_signals.append(self)
 		if port is not None:
@@ -77,7 +79,10 @@ class Signal:
 		return self.current_val
 
 	def __str__(self):
-		return self.name
+		if self.name:
+			return self.name
+		else:
+			return "BROKEN?"
 
 	def __add__(self, other):
 		return str(self) + " + " + str(other)
@@ -91,39 +96,12 @@ class Signal:
 		return new_name
 
 
-comparator_count = 1
-class CompareOperation:
-	derived_count = 1
-
-	def __init__(self, node, signal, top_node):
-		func_args = [x.id for x in top_node.body[0].args.args]
-		replace_dict = dict([(func_args[x], signal.driving_signals[x].name) for x in range(len(func_args))])
-		compare_vals = copy.deepcopy([node.left] + node.comparators)
-		for x in range(len(compare_vals)):
-			replace_args_with_signals(compare_vals[x], replace_dict)
-			compare_vals[x] = eval(compile(ast.Expression(compare_vals[x]), filename="<ast>", mode="eval"))
-		self.nodes = compare_vals
-		self.comparators = node.ops
-		global comparator_count
-		self.result = Signal(1)
-		self.result.name = "comparator_"+str(comparator_count)
-		comparator_count += 1
-
-	def __str__(self):
-		self.nodes = [str(x) for x in self.nodes]
-		node_pairs = [(str(self.nodes[x]), str(self.nodes[x+1])) for x in range(len(self.nodes)-1)]
-		ast_to_vhdl = {ast.Eq: " = ", ast.Gt: " > ", ast.Lt: " < "}
-		comparisons = [as_vhdl_string(node_pairs[x][0]) + ast_to_vhdl[type(self.comparators[x])] + as_vhdl_string(node_pairs[x][1]) for x in range(len(node_pairs))]
-		return '"1" when ' + ' and '.join(comparisons) + ' else "0"'
-
-
-def __generate_header(signal_names):
-	signals = [globals()[x] for x in signal_names]
-	i_signals = list(filter(lambda x: x.io == "in", signals))
-	o_signals = list(filter(lambda x: x.io == "out", signals))
+def __generate_header():
+	i_signals = list(filter(lambda x: x.io == "in", Signal.all_signals))
+	o_signals = list(filter(lambda x: x.io == "out", Signal.all_signals))
 
 	io_texts = [x.name + " : " + x.io + " std_logic_vector(0 to " + str(x.size-1) + ")" for x in i_signals]
-	io_texts += [x.name[:-5] + " : " + x.io + " std_logic_vector(0 to " + str(x.size-1) + ")" for x in o_signals]
+	io_texts += [x.name + " : " + x.io + " std_logic_vector(0 to " + str(x.size-1) + ")" for x in o_signals]
 	text = "library ieee;\n"
 	text += "use ieee.std_logic_1164.all;\n"
 	text += "use ieee.std_logic_unsigned.all;\n\n"
@@ -194,21 +172,27 @@ def __get_logic(driven, driving_signals):
 	return text
 
 
+def compare_node_to_string(node, signal, top_node):
+	func_args = [x.id for x in top_node.body[0].args.args]
+	replace_dict = dict([(func_args[x], signal.driving_signals[x].name) for x in range(len(func_args))])
+	compare_vals = copy.deepcopy([node.left] + node.comparators)
+	for x in range(len(compare_vals)):
+		replace_args_with_signals(compare_vals[x], replace_dict)
+		compare_vals[x] = str(eval(compile(ast.Expression(compare_vals[x]), filename="<ast>", mode="eval")))
+	node_pairs = [(compare_vals[x], compare_vals[x+1]) for x in range(len(compare_vals)-1)]
+	ast_to_vhdl = {ast.Eq: " = ", ast.Gt: " > ", ast.Lt: " < "}
+	comparisons = [as_vhdl_string(node_pairs[x][0]) + ast_to_vhdl[type(node.ops[x])] + as_vhdl_string(node_pairs[x][1]) for x in range(len(node_pairs))]
+	return '"1" when ' + ' and '.join(comparisons) + ' else "0"'
 
-derived_count = 1
+
 def __optimize_compare_vals(top_node, signal):
 	compare_signals = []
 	compare_nodes = list(filter(lambda x: isinstance(x, ast.Compare), ast.walk(top_node)))
 	for node in compare_nodes:
-		new_signal_id = len(compare_signals)+1
-		new_signal_name = "compare_" + signal.name + "_" + str(new_signal_id)
-		new_signal = Signal(1).drive(CompareOperation(node, signal, top_node))
-		new_signal.name = new_signal_name
-		globals()[new_signal.name] = new_signal
+		new_signal_name = "compare_" + signal.name + "_" + str(len(compare_signals)+1)
+		new_signal = Signal(1, name=new_signal_name).drive(compare_node_to_string(node, signal, top_node), clock=False)
 		compare_signals.append(new_signal)
 		signal.driving_signals.append(new_signal)
-		global generated_signals
-		generated_signals.append(new_signal_name)
 		node.left = ast.Call(func=ast.Name(id='int', ctx=ast.Load()), args=[ast.Name(id=new_signal_name, ctx=ast.Load())], keywords=[], starargs=None, kwargs=None)
 		node.ops = [ast.Eq()]
 		node.comparators = [ast.Num(n=1)]
@@ -235,21 +219,12 @@ def __ast_magic(signal):
 	func_name = top_node.body[0].name
 	signal.func = (eval(func_name))
 	if isinstance(top_node.body[0].body[0], ast.Return):
-		if isinstance(top_node.body[0].body[0].value, ast.Compare):
-			compare_val = CompareOperation(top_node.body[0].body[0].value, signal, top_node)
-			text = "if " + str(compare_val.nodes[0]) + ' = "1" then\n'
-			text += signal.name + ' <= "1";\n'
-			text += 'else\n'
-			text += signal.name + ' <= "0";\n'
-			text += 'end if;\n'
-			return compare_signals, text
-		else:
-			func_args = [x.id for x in top_node.body[0].args.args]
-			replace_dict = dict([(func_args[x], signal.driving_signals[x].name) for x in range(len(func_args))])
-			return_func = copy.deepcopy(top_node.body[0].body[0].value)
-			replace_args_with_signals(return_func, replace_dict)
-			return_val = str(eval(compile(ast.Expression(return_func), filename="<ast>", mode="eval")))
-			return compare_signals, signal.name + " <= " + as_vhdl_string(return_val, width=len(signal)) + ";\n"
+		func_args = [x.id for x in top_node.body[0].args.args]
+		replace_dict = dict([(func_args[x], signal.driving_signals[x].name) for x in range(len(func_args))])
+		return_func = copy.deepcopy(top_node.body[0].body[0].value)
+		replace_args_with_signals(return_func, replace_dict)
+		return_val = str(eval(compile(ast.Expression(return_func), filename="<ast>", mode="eval")))
+		return compare_signals, signal.name + " <= " + as_vhdl_string(return_val, width=len(signal)) + ";\n"
 	else:
 		driving_signals = __get_driving_signals(top_node, signal, compare_signals, False)
 		return compare_signals, __get_logic(signal, driving_signals)
@@ -274,69 +249,66 @@ def __indent(in_text):
 
 
 def generate_vhdl(code_globals):
-	"""
-	1. Finds all Signals in globals, sets their name
-	- If the signal is an output, create a signal mask
-	2. For each original or generated signal:
-		Generate body and signal text
-	3. generate header text
-	return text
-	:param code_globals: globals() of calling program
-	:return: VHDL text
-	"""
-
-	global all_signals
-
-	for each in code_globals:
-		if isinstance(code_globals[each], Signal):
-			signal = code_globals[each]
-			if signal.io == "out":
-				signal.name = each + "_mask"
-				Signal(1, name=each).drive(signal, clock=False)
-			else:
-				signal.name = each
-			globals()[signal.name] = signal
-	signal_text = "architecture generated_arch of generated_top is\n\n"
-	body_text = "\nbegin\n\n"
-	global generated_signals
-	generated_signals = []
+	all_signals = copy.copy(Signal.all_signals)
+	for signal in all_signals:
+		if signal in code_globals.values():
+			signal.name = filter(lambda x: id(code_globals[x]) == id(signal), code_globals.keys())[0]
+		else:
+			if signal.name is None:
+				signal.name = "unnamed_" + str(len(filter(signal.name[:8] == "unnamed_", Signal.all_signals)))
+		if signal.io == "out":
+			Signal(1, io="out", name=signal.name).drive(signal, clock=False)
+			signal.name = signal.name + "_mask"
+			signal.io = None
+		globals()[signal.name] = signal
+	arch_signal_text = ""
+	body_text = ""
+	signals_done = []
 	while True:
-		all_signals = filter(lambda x: isinstance(globals()[x], Signal), globals().keys())
-		unseen = list(set(all_signals) - set(generated_signals))
+		unseen = list(set([x.name for x in Signal.all_signals]) - set([x.name for x in signals_done]))
 		if not unseen:
 			break
-		generated_signals.append(unseen[0])
-		signal = globals()[unseen[0]]
-		if signal.io not in ["in", "out"]:
-			signal_text += "signal " + signal.name + " : std_logic_vector(0 to " + str(signal.size-1) + ");\n"
-		if signal.io != "in":
-			if signal.driving_signals:
-				compares, original = __ast_magic(signal)
-				for each in compares:
-					body_text += each.name + " <= " + str(each.func) + ";\n"
-					signal_text += "signal " + each.name + " : std_logic_vector(0 to " + str(each.size-1) + ");\n"
-				if signal.clock:
-					body_text += "process(clock) begin\n"
-					body_text += "if rising_edge(clock) then\n"
-				body_text += original
-				if signal.clock:
-					body_text += "end if;\n"
-					body_text += "end process;\n"
-			else:
-				if signal.func != None:
-					if signal.clock:
-						body_text += "process(clock) begin\n"
-						body_text += "if rising_edge(clock) then\n"
-					body_text += signal.name + " <= " + as_vhdl_string(signal.func, width=len(signal)) + ";\n"
-					if signal.clock:
-						body_text += "end if;\n"
-						body_text += "end process;\n"
-			logging.log(logging.INFO, "Signal " + signal.name + " complete")
-			body_text += "\n"
-	body_text += "end generated_arch;"
-	body_text = __indent(body_text)
-	header = __generate_header(generated_signals)
-	return header + signal_text + body_text
+		signal = filter(lambda x: x.name == unseen[0], Signal.all_signals)[0]
+		signals_done.append(signal)
+		new_arch_text, new_body_text, sub_done = generate_signal_vhdl(signal)
+		arch_signal_text += new_arch_text
+		body_text += new_body_text
+		signals_done += sub_done
+	header = __generate_header()
+	return __indent(header + "architecture generated_arch of generated_top is\n\n" + arch_signal_text + "\nbegin\n\n" + body_text + "end generated_arch;")
+
+
+def generate_signal_vhdl(signal):
+	arch_text = ""
+	body_text = ""
+	sub_generated = []
+	if signal.io != "in":
+		if callable(signal.func):
+			new_signals, logic_text = __ast_magic(signal)
+			sub_generated += new_signals
+			for each in new_signals:
+				body_text += generate_signal_vhdl(each)[1] + "\n"
+			if signal.clock:
+				body_text += "process(clock) begin\n"
+				body_text += "if rising_edge(clock) then\n"
+			body_text += logic_text
+			if signal.clock:
+				body_text += "end if;\n"
+				body_text += "end process;\n"
+		elif signal.func is not None:
+			if signal.clock:
+				body_text += "process(clock) begin\n"
+				body_text += "if rising_edge(clock) then\n"
+			body_text += signal.name + " <= " + as_vhdl_string(signal.func, width=len(signal)) + ";\n"
+			if signal.clock:
+				body_text += "end if;\n"
+				body_text += "end process;\n"
+		logging.log(logging.INFO, "Signal " + signal.name + " complete")
+		body_text += "\n"
+	for each in [signal] + sub_generated:
+		if each.io not in ["in", "out"]:
+			arch_text = "signal " + each.name + " : std_logic_vector(0 to " + str(each.size-1) + ");\n"
+	return arch_text, body_text, sub_generated
 
 
 def generate_ucf(code_globals, frequency, clock_pin):
