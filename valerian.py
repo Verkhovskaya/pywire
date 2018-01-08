@@ -5,14 +5,6 @@ import logging
 import math
 
 
-"""
-General code structure:
-
-Signal class (Data storage for library access)
-Several Operator classes
-
-"""
-
 def to_list(args):
 	if type(args) is list:
 		return args
@@ -36,6 +28,7 @@ def as_vhdl_string(val, width=1):
 	if type(val) is int:
 		return '"' + bin(val)[2:].zfill(width) + '"'
 	return str(val)
+
 
 class Signal:
 	all_signals = []
@@ -243,7 +236,7 @@ def __indent(in_text):
 		if first_word in [");", "end", "begin", "else"]:
 			level -= 1
 		out_text.append("    "*level + each)
-		if first_word in ("entity", "port", "begin", "if", "case", "process", "else"):
+		if first_word in ("entity", "port", "begin", "if", "case", "process", "else", "component"):
 			level += 1
 	return "\n".join(out_text)
 
@@ -251,10 +244,10 @@ def __indent(in_text):
 def generate_vhdl(code_globals):
 	all_signals = copy.copy(Signal.all_signals)
 	for signal in all_signals:
-		if signal in code_globals.values():
-			signal.name = filter(lambda x: id(code_globals[x]) == id(signal), code_globals.keys())[0]
-		else:
-			if signal.name is None:
+		if signal.name is None:
+			if signal in code_globals.values():
+				signal.name = filter(lambda x: id(code_globals[x]) == id(signal), code_globals.keys())[0]
+			else:
 				signal.name = "unnamed_" + str(len(filter(signal.name[:8] == "unnamed_", Signal.all_signals)))
 		if signal.io == "out":
 			Signal(1, io="out", name=signal.name).drive(signal, clock=False)
@@ -263,6 +256,9 @@ def generate_vhdl(code_globals):
 		globals()[signal.name] = signal
 	arch_signal_text = ""
 	body_text = ""
+	for each in Import.all_imports:
+		arch_signal_text += each.header() + "\n"
+		body_text += each.body() + "\n"
 	signals_done = []
 	while True:
 		unseen = list(set([x.name for x in Signal.all_signals]) - set([x.name for x in signals_done]))
@@ -327,3 +323,121 @@ def generate_ucf(code_globals, frequency, clock_pin):
 			for x in range(len(signal.port)):
 				text += 'NET "' + signal.name + '<' + str(x) + '>" LOC = ' + signal.port[x] + ' | IOSTANDARD = LVTTL;\n'
 	return text
+
+
+class Import:
+	all_imports = []
+
+	def __init__(self):
+		self.all_components.append(self)
+		self.links = []
+
+	def instance(self, links):
+		self.links.append(links)
+
+	def body(self):
+		pass  # Should be overwritten in Component sub-class
+
+	def header(self):
+		pass # Should be overwritten in Component sub-class
+
+
+class FromPath(Import):
+	def __init__(self, path):
+		Import.__init__(self)
+		read_file = open(path)
+		flat_text = read_file.read().replace("\n", " ").replace("\t", "").replace(")", " ) ").replace("(", " ( ").replace(";", " ; ").split(" ")
+		while '' in flat_text:
+			flat_text.remove('')
+		if "entity" not in flat_text:
+			raise Exception("Could not find entity name")
+		self.name = flat_text[flat_text.index("entity")+1]
+		self.signals = {}
+		all_in_indexes = [i for i, x in enumerate(flat_text) if x == "in"]
+		all_out_indexes = [i for i, x in enumerate(flat_text) if x == "out"]
+		for x in all_in_indexes + all_out_indexes:
+			signal_name = flat_text[x-2]
+			signal_io = flat_text[x]
+			vector_type = flat_text[x+1]
+			if vector_type == "std_logic":
+				signal_size = 0
+			elif vector_type == "std_logic_vector":
+				if flat_text[x+4] == "to":
+					signal_size = int(flat_text[x+5])-int(flat_text[x+3])+1
+				else:
+					signal_size = int(flat_text[x+3])-int(flat_text[x+5])+1
+			else:
+				raise Exception("Only std_logic and std_logic_vector are supported by Valerian as IO types")
+			self.signals[signal_name] = {"size": signal_size, "io": signal_io}
+		header_text = " ".join(flat_text[flat_text.index("port")+2:flat_text.index("end")]).replace(" ; ", ";\n").replace("is ", "is\n").replace("( ", "(").replace(" )", ")").replace(" ;",";")
+		self.header_text = "component " + self.name + " is\n" + header_text + "\nend component;"
+
+	def body(self):
+		text = ""
+		text += (self.name + "_INSTANCE_" + str(i)).upper() + " : " + self.name + "\nport map (\n"
+		for x in self.link.keys():
+			if self.link[x]["type"] == "std_logic_vector":
+				text += x + " => " + self.link[x].name + ";\n"
+			else:
+				text += x + " => " + self.link[x].name + "(0);\n"
+
+		text += "\n".join([x + " => " + self.link[x].name for x in self.link.keys()]) + ");\n"
+		return text
+
+	def header(self):
+		return self.header_text
+
+
+class BRAM(Import):
+	bram_count = 0
+
+	def __init__(self, depth, width, port_a_write, port_a_read, port_b_write=False, port_b_read=False):
+		self.bram_count += 1
+		self.id = str(self.bram_count)
+		address_a = Signal(width, name="BRAM_" + self.id + "_address_a")
+		if port_a_write:
+			write_en_a = Signal(1, name="BRAM_" + self.id + "_write_en_a")
+			data_in_a = Signal(width, name="BRAM_" + self.id + "_data_in_a")
+		if port_a_read:
+			data_out_a = Signal(width, name="BRAM_" + self.id + "_data_out_a")
+		if port_b_write or port_b_read:
+			address_b = Signal(width, name="BRAM_" + self.id + "_address_b")
+		if port_b_read:
+			data_out_b = Signal(width, name="BRAM_" + self.id + "_data_out_b")
+		if port_b_write:
+			write_en_b = Signal(1, name="BRAM_" + self.id + "_write_en_b")
+			data_in_b = Signal(width, name="BRAM_" + self.id + "_data_in_b")
+
+		self.header = "type ram_type_" + str(self.id) + " is array (" + str(depth-1) + " downto 0) of std_logic_vector(" + str(width-1) + " downto 0);\n"
+		self.header += "shared variable RAM_" + str(self.id) + " : ram_type := (others => (others => '0'));"
+
+		body_text = "process(clock) begin\n"
+		body_text += "if rising_edge(clock) then\n"
+		if port_a_read:
+			body_text += data_out_a.name + " <= RAM_" + self.id + "(conv_integer(" + address_a.name + "));\n"
+		if port_a_write:
+			body_text += "if " + write_en_a.name + ' = "1" then\n'
+			body_text += "RAM_" + self.id + "(conv_integer(" + address_a.name + ")) := " + data_in_a.name + ";\n"
+			body_text += "end if;\n"
+		body_text += "end if;\nend process;\n"
+
+		if port_b_read or port_b_write:
+			body_text = "process(clock) begin\n"
+			body_text += "if rising_edge(clock) then\n"
+			if port_b_read:
+				body_text += data_out_b.name + " <= RAM_" + self.id + "(conv_integer(" + address_b.name + "));\n"
+			if port_b_write:
+				body_text += "if " + write_en_b.name + ' = "1" then\n'
+				body_text += "RAM_" + self.id + "(conv_integer(" + address_b.name + ")) := " + data_in_b.name + ";\n"
+				body_text += "end if;\n"
+			body_text += "end if;\nend process;\n"
+		self.body_text = body_text
+
+	def body(self):
+		return self.body_text
+
+	def header(self):
+		if self.id == "1":
+			return self.header
+		else:
+			return ""
