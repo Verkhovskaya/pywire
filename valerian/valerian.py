@@ -2,7 +2,6 @@ import ast
 import inspect
 import copy
 import logging
-import math
 
 
 def to_list(args):
@@ -79,6 +78,22 @@ class Signal:
 
 	def __add__(self, other):
 		return str(self) + " + " + str(other)
+
+	def __radd__(self, other):
+		return str(other) + " + " + str(self)
+
+	def __mul__(self, other):
+		return str(self) + " * " + str(other)
+
+	def __rmul__(self, other):
+		return str(other) + " * " + str(self)
+
+	def __sub__(self, other):
+		return str(self) + " - " + str(other)
+
+	def __rsub__(self, other):
+		return str(other) + " - " + str(self)
+
 
 	def down(self, num):
 		new_name = self.name + "_1d"
@@ -256,7 +271,7 @@ def generate_vhdl(code_globals):
 		globals()[signal.name] = signal
 	arch_signal_text = ""
 	body_text = ""
-	for each in Import.all_imports:
+	for each in Component.all_components:
 		arch_signal_text += each.header() + "\n"
 		body_text += each.body() + "\n"
 	signals_done = []
@@ -325,8 +340,8 @@ def generate_ucf(code_globals, frequency, clock_pin):
 	return text
 
 
-class Import:
-	all_imports = []
+class Component:
+	all_components = []
 
 	def __init__(self):
 		self.all_components.append(self)
@@ -342,9 +357,9 @@ class Import:
 		pass # Should be overwritten in Component sub-class
 
 
-class FromPath(Import):
+class FromPath(Component):
 	def __init__(self, path):
-		Import.__init__(self)
+		Component.__init__(self)
 		read_file = open(path)
 		flat_text = read_file.read().replace("\n", " ").replace("\t", "").replace(")", " ) ").replace("(", " ( ").replace(";", " ; ").split(" ")
 		while '' in flat_text:
@@ -388,56 +403,52 @@ class FromPath(Import):
 		return self.header_text
 
 
-class BRAM(Import):
+class BRAM(Component):
 	bram_count = 0
 
-	def __init__(self, depth, width, port_a_write, port_a_read, port_b_write=False, port_b_read=False):
+	def __init__(self, width, depth, a_write=True, a_read=True, b_write=False, b_read=False):
+		Component.__init__(self)
 		self.bram_count += 1
 		self.id = str(self.bram_count)
-		address_a = Signal(width, name="BRAM_" + self.id + "_address_a")
-		if port_a_write:
-			write_en_a = Signal(1, name="BRAM_" + self.id + "_write_en_a")
-			data_in_a = Signal(width, name="BRAM_" + self.id + "_data_in_a")
-		if port_a_read:
-			data_out_a = Signal(width, name="BRAM_" + self.id + "_data_out_a")
-		if port_b_write or port_b_read:
-			address_b = Signal(width, name="BRAM_" + self.id + "_address_b")
-		if port_b_read:
-			data_out_b = Signal(width, name="BRAM_" + self.id + "_data_out_b")
-		if port_b_write:
-			write_en_b = Signal(1, name="BRAM_" + self.id + "_write_en_b")
-			data_in_b = Signal(width, name="BRAM_" + self.id + "_data_in_b")
+		self.depth = depth
+		self.width = width
+		self.props = {"a_write":a_write, "a_read":a_read, "b_write":b_write, "b_read":b_read}
+		self.a_address = Signal(width, name="BRAM_" + self.id + "_a_address")
+		if a_write:
+			self.a_write_en = Signal(1, name="BRAM_" + self.id + "_a_write_en")
+			self.a_data_in = Signal(width, name="BRAM_" + self.id + "_a_data_in")
+		if a_read:
+			self.a_data_out = Signal(width, name="BRAM_" + self.id + "_a_data_out")
+		if b_write or b_read:
+			self.b_address = Signal(width, name="BRAM_" + self.id + "_b_address")
+		if b_read:
+			self.b_data_out = Signal(width, name="BRAM_" + self.id + "_b_data_out")
+		if b_write:
+			self.b_write_en = Signal(1, name="BRAM_" + self.id + "_b_write_en")
+			self.b_data_in = Signal(width, name="BRAM_" + self.id + "_b_data_in")
 
-		self.header = "type ram_type_" + str(self.id) + " is array (" + str(depth-1) + " downto 0) of std_logic_vector(" + str(width-1) + " downto 0);\n"
-		self.header += "shared variable RAM_" + str(self.id) + " : ram_type := (others => (others => '0'));"
-
+	def body(self):
 		body_text = "process(clock) begin\n"
 		body_text += "if rising_edge(clock) then\n"
-		if port_a_read:
-			body_text += data_out_a.name + " <= RAM_" + self.id + "(conv_integer(" + address_a.name + "));\n"
-		if port_a_write:
-			body_text += "if " + write_en_a.name + ' = "1" then\n'
-			body_text += "RAM_" + self.id + "(conv_integer(" + address_a.name + ")) := " + data_in_a.name + ";\n"
+		if self.props["a_read"]:
+			body_text += self.a_data_out.name + " <= RAM_" + self.id + "(conv_integer(" + self.a_address.name + "));\n"
+		if self.props["a_write"]:
+			body_text += "if " + self.a_write_en.name + ' = "1" then\n'
+			body_text += "RAM_" + self.id + "(conv_integer(" + self.a_address.name + ")) := " + self.a_data_in.name + ";\n"
 			body_text += "end if;\n"
 		body_text += "end if;\nend process;\n"
 
-		if port_b_read or port_b_write:
+		if self.props["b_read"] or self.props["b_write"]:
 			body_text = "process(clock) begin\n"
 			body_text += "if rising_edge(clock) then\n"
-			if port_b_read:
-				body_text += data_out_b.name + " <= RAM_" + self.id + "(conv_integer(" + address_b.name + "));\n"
-			if port_b_write:
-				body_text += "if " + write_en_b.name + ' = "1" then\n'
-				body_text += "RAM_" + self.id + "(conv_integer(" + address_b.name + ")) := " + data_in_b.name + ";\n"
+			if self.props["b_read"]:
+				body_text += self.b_data_out.name + " <= RAM_" + self.id + "(conv_integer(" + self.b_address.name + "));\n"
+			if self.props["b_write"]:
+				body_text += "if " + self.b_write_en.name + ' = "1" then\n'
+				body_text += "RAM_" + self.id + "(conv_integer(" + self.b_address.name + ")) := " + self.b_data_in.name + ";\n"
 				body_text += "end if;\n"
-			body_text += "end if;\nend process;\n"
-		self.body_text = body_text
-
-	def body(self):
-		return self.body_text
+		return body_text
 
 	def header(self):
-		if self.id == "1":
-			return self.header
-		else:
-			return ""
+		text = "type ram_type_" + str(self.id) + " is array (" + str(self.depth-1) + " downto 0) of std_logic_vector(" + str(self.width-1) + " downto 0);\n"
+		return text + "shared variable RAM_" + str(self.id) + " : ram_type := (others => (others => '0'));"
