@@ -53,48 +53,6 @@ led1.drive(blink, args=(counter))
 
 print(generate_vhdl(globals()))
 ```
-Which generates:
-```vhdl
-library ieee;
-use ieee.std_logic_1164.all;
-use ieee.std_logic_unsigned.all;
-
-entity generated_top is
-    port(
-    clock : in std_logic;
-    led1 : out std_logic_vector(0 to 0));
-end entity;
-
-architecture generated_arch of generated_top is
-
-signal counter : std_logic_vector(0 to 25);
-signal compare_led1_mask_1 : std_logic_vector(0 to 0);
-
-begin
-
-led1 <= led1_mask;
-
-process(clock) begin
-    if rising_edge(clock) then
-        counter <= counter + 1;
-    end if;
-end process;
-
-compare_led1_mask_1 <= "1" when counter > 33554432 else "0";
-
-
-process(clock) begin
-    if rising_edge(clock) then
-        case(compare_led1_mask_1) is
-            when "0" => led1_mask <= "0";
-            when "1" => led1_mask <= "1";
-            when others => null;
-        end case;
-    end if;
-end process;
-
-end generated_arch;
-```
 
 If you are testing on Xilinx hardware, you will also need to create a .ucf file that tells the FPGA how to connect the outputs to the pins. 
 My hardware uses an external clock on pin 56 that runs at 50MHz/second, so I use
@@ -102,37 +60,47 @@ My hardware uses an external clock on pin 56 that runs at 50MHz/second, so I use
 ```python
 print(generate_ucf(globals(), 50, 'P56'))
 ```
-Which outputs
-```ucf
-end generated_arch;
-NET "clock" TNM_NET = clock;
-TIMESPEC TS_clk = PERIOD "clock" 50 MHz HIGH 50%;
-NET "clock" LOC = P56 | IOSTANDARD = LVTTL;
-NET "led1<0>" LOC = P134 | IOSTANDARD = LVTTL;
-```
 
 Built with ISE and loaded onto a MojoV3, this creates a blinking light: [YouTube link](https://www.youtube.com/watch?v=y5rW_DIoK7Y&feature=youtu.be)
 
 # BRAM
-BRAM is initialized with `BRAM(width, depth, a_write=True, a_read=True, b_write=False, b_read=False)`. 
-
-For example, to create a 32x512 dual ported BRAM:
-
+BRAM is initialized with 
 ```python
-mem = BRAM(32, 512, True, True, True, True)
+mem = BRAM(width, depth, a_write=True, a_read=True, b_write=False, b_read=False)`. 
 
 # Pins:
 mem.a_address
-mem.a_write_en
-mem.a_data_in
-mem.a_data_out
-mem.b_address
-mem.b_write_en
-mem.b_data_in
-mem.b_data_out
+mem.a_write_en  # Only implemented if a_write == True
+mem.a_data_in  # Only implemented if a_write == True
+mem.a_data_out  # Only implemented if a_read == True
+mem.b_address  # Only implemented if b_write == True or b_read == True
+mem.b_write_en  # Only implemented if b_write == True
+mem.b_data_in  # Only implemented if b_write == True
+mem.b_data_out  # Only implemented if b_read == True
 
 # Properties:
 mem.width
 mem.depth
 mem.props  # {"a_write":a_write, "a_read":a_read, "b_write":b_write, "b_read":b_read}
 mem.id
+```
+
+So for example, a single port 8x2 BRAM:
+
+```python
+from build import *
+mem = BRAM(8, 2, True, True)
+
+bram_address = Signal(1, io="in", port="P51")
+bram_write_data = Signal(8, io="in", port=["P35", "P33", "P30", "P27", "P24", "P22", "P17", "P15"])
+bram_write_en = Signal(1, io="in", port="P41")
+bram_read = Signal(8, io="out", port=["P134", "P133", "P132", "P131", "P127", "P126", "P124", "P123"])
+
+mem.a_address.drive(bram_address)
+mem.a_data_in.drive(bram_write_data)
+mem.a_write_en.drive(bram_write_en)
+bram_read.drive(mem.a_data_out)
+
+print(generate_vhdl(globals()))
+print(generate_ucf(globals(), 50, 'P56'))
+```
