@@ -3,8 +3,7 @@ A Python library for generating VHDL.
 ### Supports FPGA components, including:
 - Look-up tables
 - Logic slices
-
-(BRAM coming soon)
+- BRAM
 
 ### Other features include:
 - Generating .ucf files
@@ -16,6 +15,8 @@ A Python library for generating VHDL.
 
 ### Sections in this documentation:
 [Blink example](https://github.com/Verkhovskaya/Valerian/new/master?readme=1#blink-example) (Look-up tables, logic slices and generating .vhdl and .ucf files)
+
+[BRAM](https://github.com/Verkhovskaya/Valerian/new/master?readme=1#bram) (Look-up tables, logic slices and generating .vhdl and .ucf files)
 
 # Blink example
 Valerian is based on a `Signal` class, which contains an integer value between 0 and 2**(size)-1. It is initialized as 
@@ -110,3 +111,27 @@ NET "led1<0>" LOC = P134 | IOSTANDARD = LVTTL;
 ```
 
 Built with ISE and loaded onto a MojoV3, this creates a blinking light: [YouTube link](https://www.youtube.com/watch?v=y5rW_DIoK7Y&feature=youtu.be)
+
+# BRAM
+BRAM is initialized with `BRAM(width, depth, a_write=True, a_read=True, b_write=False, b_read=False)`. 
+
+For example, to create a 32x512 dual ported BRAM:
+
+```python
+mem = BRAM(32, 512, True, True, True, True)
+
+# Pins:
+mem.a_address
+mem.a_write_en
+mem.a_data_in
+mem.a_data_out
+mem.b_address
+mem.b_write_en
+mem.b_data_in
+mem.b_data_out
+
+# Properties:
+mem.width
+mem.depth
+mem.props  # {"a_write":a_write, "a_read":a_read, "b_write":b_write, "b_read":b_read}
+mem.id
