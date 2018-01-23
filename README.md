@@ -1,5 +1,7 @@
 # PyDL
+
 (Pronounced fiddle)
+
 An easy-to-use Python library for generating VHDL. 
 ### Supports FPGA components, including:
 - Look-up tables
