@@ -1,6 +1,4 @@
-# PyDL
-
-(Pronounced fiddle)
+# Pywire
 
 An easy-to-use Python library for generating VHDL. 
 ### Supports FPGA components, including:
@@ -17,12 +15,12 @@ An easy-to-use Python library for generating VHDL.
 - Using more than one clock
 
 ### Sections in this documentation:
-[Blink example](https://github.com/Verkhovskaya/Valerian/new/master?readme=1#blink-example) (Look-up tables, logic slices and generating .vhdl and .ucf files)
+[Blink example](https://github.com/Verkhovskaya/Pywire/new/master?readme=1#blink-example) (Look-up tables, logic slices and generating .vhdl and .ucf files)
 
-[BRAM](https://github.com/Verkhovskaya/Valerian/new/master?readme=1#bram) (Look-up tables, logic slices and generating .vhdl and .ucf files)
+[BRAM](https://github.com/Verkhovskaya/Pywire/new/master?readme=1#bram) (Look-up tables, logic slices and generating .vhdl and .ucf files)
 
 # Blink example
-Valerian is based on a `Signal` class, which contains an integer value between 0 and 2**(size)-1. It is initialized as 
+Pywire is based on a `Signal` class, which contains an integer value between 0 and 2**(size)-1. It is initialized as 
 
 ```python
 Signal(bit_size, io=None, port=None, name=None)
