@@ -2,7 +2,8 @@ import ast
 import inspect
 import copy
 import logging
-
+from .component import Component
+import math
 
 def to_list(args):
 	if type(args) is list:
@@ -93,7 +94,6 @@ class Signal:
 
 	def __rsub__(self, other):
 		return str(other) + " - " + str(self)
-
 
 	def down(self, num):
 		new_name = self.name + "_1d"
@@ -265,7 +265,7 @@ def generate_vhdl(code_globals):
 			else:
 				signal.name = "unnamed_" + str(len(filter(signal.name[:8] == "unnamed_", Signal.all_signals)))
 		if signal.io == "out":
-			Signal(1, io="out", name=signal.name).drive(signal, clock=False)
+			Signal(len(signal), io="out", name=signal.name).drive(signal, clock=False)
 			signal.name = signal.name + "_mask"
 			signal.io = None
 		globals()[signal.name] = signal
@@ -339,116 +339,3 @@ def generate_ucf(code_globals, frequency, clock_pin):
 				text += 'NET "' + signal.name + '<' + str(x) + '>" LOC = ' + signal.port[x] + ' | IOSTANDARD = LVTTL;\n'
 	return text
 
-
-class Component:
-	all_components = []
-
-	def __init__(self):
-		self.all_components.append(self)
-		self.links = []
-
-	def instance(self, links):
-		self.links.append(links)
-
-	def body(self):
-		pass  # Should be overwritten in Component sub-class
-
-	def header(self):
-		pass # Should be overwritten in Component sub-class
-
-
-class FromPath(Component):
-	def __init__(self, path):
-		Component.__init__(self)
-		read_file = open(path)
-		flat_text = read_file.read().replace("\n", " ").replace("\t", "").replace(")", " ) ").replace("(", " ( ").replace(";", " ; ").split(" ")
-		while '' in flat_text:
-			flat_text.remove('')
-		if "entity" not in flat_text:
-			raise Exception("Could not find entity name")
-		self.name = flat_text[flat_text.index("entity")+1]
-		self.signals = {}
-		all_in_indexes = [i for i, x in enumerate(flat_text) if x == "in"]
-		all_out_indexes = [i for i, x in enumerate(flat_text) if x == "out"]
-		for x in all_in_indexes + all_out_indexes:
-			signal_name = flat_text[x-2]
-			signal_io = flat_text[x]
-			vector_type = flat_text[x+1]
-			if vector_type == "std_logic":
-				signal_size = 0
-			elif vector_type == "std_logic_vector":
-				if flat_text[x+4] == "to":
-					signal_size = int(flat_text[x+5])-int(flat_text[x+3])+1
-				else:
-					signal_size = int(flat_text[x+3])-int(flat_text[x+5])+1
-			else:
-				raise Exception("Only std_logic and std_logic_vector are supported by Valerian as IO types")
-			self.signals[signal_name] = {"size": signal_size, "io": signal_io}
-		header_text = " ".join(flat_text[flat_text.index("port")+2:flat_text.index("end")]).replace(" ; ", ";\n").replace("is ", "is\n").replace("( ", "(").replace(" )", ")").replace(" ;",";")
-		self.header_text = "component " + self.name + " is\n" + header_text + "\nend component;"
-
-	def body(self):
-		text = ""
-		text += (self.name + "_INSTANCE_" + str(i)).upper() + " : " + self.name + "\nport map (\n"
-		for x in self.link.keys():
-			if self.link[x]["type"] == "std_logic_vector":
-				text += x + " => " + self.link[x].name + ";\n"
-			else:
-				text += x + " => " + self.link[x].name + "(0);\n"
-
-		text += "\n".join([x + " => " + self.link[x].name for x in self.link.keys()]) + ");\n"
-		return text
-
-	def header(self):
-		return self.header_text
-
-
-class BRAM(Component):
-	bram_count = 0
-
-	def __init__(self, width, depth, a_write=True, a_read=True, b_write=False, b_read=False):
-		Component.__init__(self)
-		self.bram_count += 1
-		self.id = str(self.bram_count)
-		self.depth = depth
-		self.width = width
-		self.props = {"a_write":a_write, "a_read":a_read, "b_write":b_write, "b_read":b_read}
-		self.a_address = Signal(width, name="BRAM_" + self.id + "_a_address")
-		if a_write:
-			self.a_write_en = Signal(1, name="BRAM_" + self.id + "_a_write_en")
-			self.a_data_in = Signal(width, name="BRAM_" + self.id + "_a_data_in")
-		if a_read:
-			self.a_data_out = Signal(width, name="BRAM_" + self.id + "_a_data_out")
-		if b_write or b_read:
-			self.b_address = Signal(width, name="BRAM_" + self.id + "_b_address")
-		if b_read:
-			self.b_data_out = Signal(width, name="BRAM_" + self.id + "_b_data_out")
-		if b_write:
-			self.b_write_en = Signal(1, name="BRAM_" + self.id + "_b_write_en")
-			self.b_data_in = Signal(width, name="BRAM_" + self.id + "_b_data_in")
-
-	def body(self):
-		body_text = "process(clock) begin\n"
-		body_text += "if rising_edge(clock) then\n"
-		if self.props["a_read"]:
-			body_text += self.a_data_out.name + " <= RAM_" + self.id + "(conv_integer(" + self.a_address.name + "));\n"
-		if self.props["a_write"]:
-			body_text += "if " + self.a_write_en.name + ' = "1" then\n'
-			body_text += "RAM_" + self.id + "(conv_integer(" + self.a_address.name + ")) := " + self.a_data_in.name + ";\n"
-			body_text += "end if;\n"
-		body_text += "end if;\nend process;\n"
-
-		if self.props["b_read"] or self.props["b_write"]:
-			body_text = "process(clock) begin\n"
-			body_text += "if rising_edge(clock) then\n"
-			if self.props["b_read"]:
-				body_text += self.b_data_out.name + " <= RAM_" + self.id + "(conv_integer(" + self.b_address.name + "));\n"
-			if self.props["b_write"]:
-				body_text += "if " + self.b_write_en.name + ' = "1" then\n'
-				body_text += "RAM_" + self.id + "(conv_integer(" + self.b_address.name + ")) := " + self.b_data_in.name + ";\n"
-				body_text += "end if;\n"
-		return body_text
-
-	def header(self):
-		text = "type ram_type_" + str(self.id) + " is array (" + str(self.depth-1) + " downto 0) of std_logic_vector(" + str(self.width-1) + " downto 0);\n"
-		return text + "shared variable RAM_" + str(self.id) + " : ram_type := (others => (others => '0'));"

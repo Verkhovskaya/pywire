@@ -1,4 +1,4 @@
-from valerian import *
+from pywire import *
 
 counter = Signal(26)
 
@@ -7,10 +7,10 @@ def increment(x):
     return x+1
 
 
-counter.drive(increment, args=(counter))
-
+counter.drive(increment, args=counter)
 
 led1 = Signal(1, io="out", port="P134")
+
 
 def blink(slow_clock):
     if slow_clock > 2**25:

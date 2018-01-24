@@ -1,49 +1,61 @@
-from valerian import *
+from pywire import *
 
-new_data = Signal(8, type="in") # 8 bit RGB data coming from the camera
-new_line = Signal(1, type="in")  # New line trigger coming from camera
-new_frame = Signal(1, type="in") # New frame trigger coming from camera
-new_pixel = Signal(1, type="in") # New pixel trigger coming from camera
+camera_clock = Signal(1, io="out", port="P40")  # 25MHz
+frame_invalid = Signal(1, io="in", port="P26")  # New frame trigger coming from camera. Aka VSYNC
+line_valid = Signal(1, io="in", port="P34")  # New line trigger coming from camera. AKA HREF
+pixel_clock = Signal(1, io="in", port="P23")  # New pixel trigger coming from camera. AKA PCLK
 
-camera_x = Signal(4) # Derived from new_frame, new_line
-camera_y = Signal(4) # Derived from new_line, new_pixel
+# 8 bit RGB data coming from the camera
+new_data = Signal(8, io="in", port=['P9', 'P11', 'P7', 'P14', 'P5', 'P16', 'P2', 'P21'])
 
-request_x = Signal(4)
-request_y = Signal(4)
-response = Signal(8, type="out")
+camera_x = Signal(10)  # Derived from new_frame, new_line
+camera_y = Signal(10)  # Derived from new_line, new_pixel
 
-request_x.drive(430)
-request_y.drive(200)
+request_x = Signal(10).drive(430)
+request_y = Signal(10).drive(200)
+response = Signal(8, io="out", port=["P134", "P133", "P132", "P131", "P127", "P126", "P124", "P123"])
 
 
-def camera_pos(current, increment, clear):
-	if bool(clear):
+def halve_frequency(slow_clock):
+	if slow_clock == 1:
 		return 0
-	elif int(increment) == 1:
-		return int(current) + 1
 	else:
-		return int(current)
-
-
-camera_x.drive(camera_pos, args=(camera_x, new_pixel, new_line))
-camera_y.drive(camera_pos, args=(camera_y, new_line, new_frame))
-
-
-data = [False]
-def latch(request_x, request_y, camera_x, camera_y, current_data):
-	if bool(data[0]):
 		return 1
-	if int(request_x) == int(camera_x) and int(request_y) == int(camera_y):
-		return int(current_data)
 
 
-response.drive(latch, args=(request_x, request_y, camera_x, camera_y, new_data))
+camera_clock.drive(halve_frequency, args=camera_clock)
 
-response.io("p11")
-new_data.io(["p"+str(x) for x in range(8)])
-new_pixel.io("p8")
-new_line.io("p9")
-new_frame.io("p10")
-print(generate_vhdl(globals(), response))
-print("")
-print(generate_ucf(50, response))
+
+def horizontal_track(x_pos, line_valid, pixel_clock):
+	if line_valid == 0:
+		return 0
+	elif pixel_clock == 1:
+		return x_pos + 1
+	else:
+		return x_pos
+
+
+camera_x.drive(horizontal_track, args=(camera_x, line_valid, pixel_clock))
+
+
+def vertical_track(y_pos, line_valid, frame_invalid):
+	if frame_invalid == 1:
+		return 0
+	elif line_valid == 1 and line_valid.down(1) == 0:
+		return y_pos + 1
+	else:
+		return y_pos
+
+
+camera_y.drive(vertical_track, args=(camera_y, line_valid, frame_invalid))
+
+
+def latch(request_x, request_y, camera_x, camera_y, current_data, pixel_clock):
+	if request_x == camera_x and request_y == camera_y and pixel_clock == 0:
+		return current_data
+
+
+response.drive(latch, args=(request_x, request_y, camera_x, camera_y, new_data, pixel_clock))
+
+print(generate_ucf(globals(), 50, 'P56'))
+print(generate_vhdl(globals()))

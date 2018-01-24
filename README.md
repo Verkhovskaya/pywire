@@ -1,7 +1,8 @@
 # Pywire
 
-An easy-to-use Python library for generating VHDL. 
-### Supports FPGA components, including:
+An easy-to-use Python 2.7 library for generating VHDL.
+
+### Supports all main FPGA components, including:
 - Look-up tables
 - Logic slices
 - BRAM
@@ -9,7 +10,7 @@ An easy-to-use Python library for generating VHDL.
 ### Other features include:
 - Generating .ucf files
 
-(Support for re-usable, configurable components coming soon)
+(Support for import VHDL components coming soon)
 
 ### Does not support:
 - Using more than one clock
@@ -33,7 +34,7 @@ my_signal.drive(my_func, args=(arg1, arg2, ...))
 
 For example:
 ```python
-from valerian import *
+from pywire import *
 
 counter = Signal(26)
 
@@ -88,7 +89,7 @@ mem.id
 So for example, a single port 8x2 BRAM:
 
 ```python
-from build import *
+from pywire import *
 mem = BRAM(8, 2, True, True)
 
 bram_address = Signal(1, io="in", port="P51")
