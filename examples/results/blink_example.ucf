@@ -1,0 +1,4 @@
+NET "clock" TNM_NET = clock;
+TIMESPEC TS_clk = PERIOD "clock" 50 MHz HIGH 50%;
+NET "clock" LOC = P56 | IOSTANDARD = LVTTL;
+NET "led1<0>" LOC = P134 | IOSTANDARD = LVTTL;

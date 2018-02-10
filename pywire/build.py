@@ -1,34 +1,27 @@
 from pywire import *
-import os
-import datetime
-import subprocess
+import inspect
+import ast
 
 
-def build(glob_vars, notes):
-	frequency = 50
-	clock_pin = "P56"
-	base_address = "/Users/2017-A/Dropbox/fpga/fpga_builds"
-	timestamp = str(datetime.datetime.now()).replace(" ", "_").replace(":", "_").replace("-", "_")[:-7]
-	directory = base_address + "/" + timestamp
-	os.mkdir(directory)
-	os.chdir(directory)
-	os.mkdir("src")
-	top = open(directory + "/src/generated_top.vhd", "w")
-	new_vhdl = generate_vhdl(glob_vars)
-	print(new_vhdl)
-	top.write(new_vhdl)
-	top.close()
-	if notes:
-		notes_file = open(directory + "/build_notes.txt", "w")
-		notes_file.write(notes)
-	ucf = open(directory + "/src/generated_top.ucf", "w")
-	new_ucf = generate_ucf(glob_vars, frequency, clock_pin)
-	print("")
-	print(new_ucf)
-	ucf.write(new_ucf)
-	ucf.close()
-	build_files = ["generated_top.vhd", "generated_top.ucf"]
-	top_file = "generated_top"
-	args = timestamp + " " + top_file + " " + " ".join(build_files)
-	print("bash /Users/2017-A/Dropbox/tools/fpga_builds/build_fpga.sh " + args)
-	subprocess.call("bash /Users/2017-A/Dropbox/fpga/fpga_builds/build_fpga.sh " + args, shell=True)
+def build(func, args, clock=True):
+	source = inspect.getsource(func)
+	top_node = ast.parse(source)
+	func_args = [x.id for x in top_node.body[0].args.args]
+	func_name = top_node.body[0].name
+	assert(len(args) == len(func_args))
+	driven_indexes = []
+	for line in source.split("\n"):
+		if "=" in line:
+			for arg_index in range(len(args)):
+				if func_args[arg_index] in line[0:line.index("=")] and arg_index not in driven_indexes:
+					driven_indexes.append(arg_index)
+	for index in driven_indexes:
+		source_copy = source.split("\n")
+		for line_id in range(len(source_copy)):
+			line = source_copy[line_id]
+			if "=" in line:
+				if func_args[index] not in line[0:line.index("=")]:
+					source_copy[line_id] = "\t"*(line.count("\t")) + "pass"
+				else:
+					source_copy[line_id] = "\t"*(line.count("\t")) + "return " + line[line.index("=")+1:]
+		args[index].drive("\n".join(source_copy), args, clock=clock)

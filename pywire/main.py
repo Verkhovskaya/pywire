@@ -49,14 +49,22 @@ class Signal:
 		else:
 			self.port = None
 
-		self.func = None
+		self.driver = None
 		self.driving_signals = None
 		self.clock = None
 
 		self.current_val = 0
 
-	def drive(self, func, args=None, clock=True):
-		self.func = func
+	def drive(self, driver, args=None, clock=True):
+		if callable(driver):
+			self.driver = ast.parse(inspect.getsource(driver))
+		elif type(driver) is str:
+			if driver[:3] == "def":
+				self.driver = ast.parse(driver)
+			else:
+				self.driver = driver
+		else:
+			self.driver = driver
 		self.clock = clock
 		if args != None:
 			self.driving_signals = to_list(args)
@@ -104,7 +112,7 @@ class Signal:
 		return new_name
 
 
-def __generate_header():
+def __generate_header(name):
 	i_signals = list(filter(lambda x: x.io == "in", Signal.all_signals))
 	o_signals = list(filter(lambda x: x.io == "out", Signal.all_signals))
 
@@ -113,7 +121,7 @@ def __generate_header():
 	text = "library ieee;\n"
 	text += "use ieee.std_logic_1164.all;\n"
 	text += "use ieee.std_logic_unsigned.all;\n\n"
-	text += "entity generated_top is\n"
+	text += "entity " + name + " is\n"
 	text += "port(\n"
 	text += ";\n".join(["clock : in std_logic"]+io_texts)
 	text += ");\n"
@@ -152,11 +160,14 @@ def __match_widths(some_string, some_object):
 def __get_lut(destination, driving_signals):
 	total_width = sum([len(x) for x in driving_signals])
 	lut = {}
+	func_name = destination.driver.body[0].name
+	exec(compile(destination.driver, filename="<ast>", mode="exec"), globals())
+	func = globals()[func_name]
 	for i in range(2 ** total_width):
 		func_input_line = __match_widths(bin(i)[2:].zfill(total_width), driving_signals)
 		for j in range(len(driving_signals)):
 			driving_signals[j].current_val = int(func_input_line[j], 2)
-		func_output = destination.func(*destination.driving_signals)
+		func_output = func(*destination.driving_signals)
 		if type(func_output) is bool:
 			func_output = {True: "1", False: "0"}[func_output]
 		if func_output != None:
@@ -221,11 +232,8 @@ def __ast_magic(signal):
 	:param signal: A driven Signal.
 	:return: (compare_signals, lut)
 	"""
-	top_node = ast.parse(inspect.getsource(signal.func))
+	top_node = signal.driver
 	compare_signals = __optimize_compare_vals(top_node, signal)
-	exec(compile(top_node, filename="<ast>", mode="exec"))
-	func_name = top_node.body[0].name
-	signal.func = (eval(func_name))
 	if isinstance(top_node.body[0].body[0], ast.Return):
 		func_args = [x.id for x in top_node.body[0].args.args]
 		replace_dict = dict([(func_args[x], signal.driving_signals[x].name) for x in range(len(func_args))])
@@ -256,7 +264,7 @@ def __indent(in_text):
 	return "\n".join(out_text)
 
 
-def generate_vhdl(code_globals):
+def generate_vhdl(code_globals, name="generated_top"):
 	all_signals = copy.copy(Signal.all_signals)
 	for signal in all_signals:
 		if signal.name is None:
@@ -285,8 +293,8 @@ def generate_vhdl(code_globals):
 		arch_signal_text += new_arch_text
 		body_text += new_body_text
 		signals_done += sub_done
-	header = __generate_header()
-	return __indent(header + "architecture generated_arch of generated_top is\n\n" + arch_signal_text + "\nbegin\n\n" + body_text + "end generated_arch;")
+	header = __generate_header(name)
+	return __indent(header + "architecture " + name + "_arch of " + name + " is\n\n" + arch_signal_text + "\nbegin\n\n" + body_text + "end " + name + "_arch;")
 
 
 def generate_signal_vhdl(signal):
@@ -294,7 +302,7 @@ def generate_signal_vhdl(signal):
 	body_text = ""
 	sub_generated = []
 	if signal.io != "in":
-		if callable(signal.func):
+		if isinstance(signal.driver, ast.Module):
 			new_signals, logic_text = __ast_magic(signal)
 			sub_generated += new_signals
 			for each in new_signals:
@@ -306,11 +314,11 @@ def generate_signal_vhdl(signal):
 			if signal.clock:
 				body_text += "end if;\n"
 				body_text += "end process;\n"
-		elif signal.func is not None:
+		elif signal.driver is not None:
 			if signal.clock:
 				body_text += "process(clock) begin\n"
 				body_text += "if rising_edge(clock) then\n"
-			body_text += signal.name + " <= " + as_vhdl_string(signal.func, width=len(signal)) + ";\n"
+			body_text += signal.name + " <= " + as_vhdl_string(signal.driver, width=len(signal)) + ";\n"
 			if signal.clock:
 				body_text += "end if;\n"
 				body_text += "end process;\n"

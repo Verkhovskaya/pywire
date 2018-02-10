@@ -18,11 +18,11 @@ class Component:
 		pass # Should be overwritten in Component sub-class
 
 
-class FromPath(Component):
-	def __init__(self, path):
+class FromText(Component):
+	def __init__(self, text):
+		self.links = {}
 		Component.__init__(self)
-		read_file = open(path)
-		flat_text = read_file.read().replace("\n", " ").replace("\t", "").replace(")", " ) ").replace("(", " ( ").replace(";", " ; ").split(" ")
+		flat_text = text.replace("\n", " ").replace("\t", "").replace(")", " ) ").replace("(", " ( ").replace(";", " ; ").split(" ")
 		while '' in flat_text:
 			flat_text.remove('')
 		if "entity" not in flat_text:
@@ -48,19 +48,21 @@ class FromPath(Component):
 		header_text = " ".join(flat_text[flat_text.index("port")+2:flat_text.index("end")]).replace(" ; ", ";\n").replace("is ", "is\n").replace("( ", "(").replace(" )", ")").replace(" ;",";")
 		self.header_text = "component " + self.name + " is\n" + header_text + "\nend component;"
 
+	def link(self, links):
+		self.links = links
+
 	def body(self):
 		text = ""
-		text += (self.name + "_INSTANCE_" + str(i)).upper() + " : " + self.name + "\nport map (\n"
-		for x in self.link.keys():
-			if self.link[x]["type"] == "std_logic_vector":
-				text += x + " => " + self.link[x].name + ";\n"
+		text += "COMPONENT_" + str(len(Component.all_components)) + " : " + self.name + "\nport map (\n"
+		for x in self.links.keys():
+			if self.signals[x]["size"] == 0:
+				text += x + " => " + self.links[x].name + "(0);\n"
 			else:
-				text += x + " => " + self.link[x].name + "(0);\n"
-
-		text += "\n".join([x + " => " + self.link[x].name for x in self.link.keys()]) + ");\n"
+				text += x + " => " + self.links[x].name + ";\n"
+		text += "clock => clock;\n"
+		text += ");"
 		return text
 
 	def header(self):
 		return self.header_text
-
 

@@ -18,7 +18,7 @@ An easy-to-use Python 2.7 library for generating VHDL.
 ### Sections in this documentation:
 [Blink example](https://github.com/Verkhovskaya/Pywire/new/master?readme=1#blink-example) (Look-up tables, logic slices and generating .vhdl and .ucf files)
 
-[BRAM](https://github.com/Verkhovskaya/Pywire/new/master?readme=1#bram) (Look-up tables, logic slices and generating .vhdl and .ucf files)
+[BRAM](https://github.com/Verkhovskaya/Pywire/new/master?readme=1#bram)
 
 # Blink example
 Pywire is based on a `Signal` class, which contains an integer value between 0 and 2**(size)-1. It is initialized as 

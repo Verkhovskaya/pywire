@@ -57,5 +57,5 @@ def latch(request_x, request_y, camera_x, camera_y, current_data, pixel_clock):
 
 response.drive(latch, args=(request_x, request_y, camera_x, camera_y, new_data, pixel_clock))
 
+print(generate_vhdl(globals(), name="camera_example"))
 print(generate_ucf(globals(), 50, 'P56'))
-print(generate_vhdl(globals()))
