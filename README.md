@@ -1,4 +1,4 @@
-pywire is an easy-to-use Python library for generating VHDL, designed for use with FPGAs. 
+PyWire is an easy-to-use Python library for generating VHDL, designed for use with FPGAs. 
 
 Features:
 - Simple and complex functions
