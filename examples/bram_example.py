@@ -11,5 +11,5 @@ mem.a_data_in.drive(bram_write_data)
 mem.a_write_en.drive(bram_write_en)
 bram_read.drive(mem.a_data_out)
 
-print(generate_vhdl(globals(), name="bram_example"))
-print(generate_ucf(globals(), 50, 'P56'))
+print(vhdl(globals(), name="bram_example"))
+print(timing(globals(), 50, 'P56', vendor="Xilinx"))

@@ -23,7 +23,7 @@ def replace_args_with_signals(original, replace_dict):
 
 def as_vhdl_string(val, width=1):
 	if type(val) is str:
-		if len(filter(lambda x: x not in ["0", "1"], val)) == 0:
+		if len(list(filter(lambda x: x not in ["0", "1"], val))) == 0:
 			return '"' + val + '"'
 	if type(val) is int:
 		return '"' + bin(val)[2:].zfill(width) + '"'
@@ -264,12 +264,12 @@ def __indent(in_text):
 	return "\n".join(out_text)
 
 
-def generate_vhdl(code_globals, name="generated_top"):
+def vhdl(code_globals, name="generated_top"):
 	all_signals = copy.copy(Signal.all_signals)
 	for signal in all_signals:
 		if signal.name is None:
 			if signal in code_globals.values():
-				signal.name = filter(lambda x: id(code_globals[x]) == id(signal), code_globals.keys())[0]
+				signal.name = list(filter(lambda x: id(code_globals[x]) == id(signal), code_globals.keys()))[0]
 			else:
 				signal.name = "unnamed_" + str(len(filter(signal.name[:8] == "unnamed_", Signal.all_signals)))
 		if signal.io == "out":
@@ -287,7 +287,7 @@ def generate_vhdl(code_globals, name="generated_top"):
 		unseen = list(set([x.name for x in Signal.all_signals]) - set([x.name for x in signals_done]))
 		if not unseen:
 			break
-		signal = filter(lambda x: x.name == unseen[0], Signal.all_signals)[0]
+		signal = list(filter(lambda x: x.name == unseen[0], Signal.all_signals))[0]
 		signals_done.append(signal)
 		new_arch_text, new_body_text, sub_done = generate_signal_vhdl(signal)
 		arch_signal_text += new_arch_text
@@ -330,7 +330,7 @@ def generate_signal_vhdl(signal):
 	return arch_text, body_text, sub_generated
 
 
-def generate_ucf(code_globals, frequency, clock_pin):
+def timing(code_globals, frequency, clock_pin, vendor=""):
 	entity_signals = []
 	for each in code_globals:
 		if isinstance(code_globals[each], Signal):
@@ -339,7 +339,7 @@ def generate_ucf(code_globals, frequency, clock_pin):
 			entity_signals.append(signal)
 			signal.name = each
 	text = 'NET "clock" TNM_NET = clock;\n'
-	text += 'TIMESPEC TS_clk = PERIOD "clock" ' + str(frequency) + ' MHz HIGH 50%;\n'
+	text += 'TIMESPEC TS_clk = PERIOD "clock" ' + str(frequency/1000000.0) + ' MHz HIGH 50%;\n'
 	text += 'NET "clock" LOC = ' + clock_pin + ' | IOSTANDARD = LVTTL;\n'
 	for signal in entity_signals:
 		if signal.port:

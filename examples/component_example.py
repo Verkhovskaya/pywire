@@ -27,5 +27,5 @@ b_out = Signal(1, name="b_outer", io="out", port=["P2"])
 inverter = FromText(component_text)
 inverter.link({"a": a_out, "b": b_out})
 
-print(generate_vhdl(globals(), name="component_example"))
-print(generate_ucf(globals(), 50, 'P56'))
+print(vhdl(globals(), name="component_example"))
+print(timing(globals(), 50, 'P56', vendor="Xilinx"))

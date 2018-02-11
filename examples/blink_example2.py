@@ -13,5 +13,5 @@ def logic(counter, led):
 
 build(logic, (counter, led1))
 
-print(generate_vhdl(globals(), name="blink_example"))
-print(generate_ucf(globals(), 50, 'P56'))
+print(vhdl(globals(), name="blink_example"))
+print(timing(globals(), 50, 'P56', vendor="Xilinx"))

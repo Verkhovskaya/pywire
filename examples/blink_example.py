@@ -21,5 +21,5 @@ def blink(slow_clock):
 
 led1.drive(blink, args=(counter))
 
-print(generate_vhdl(globals(), name="blink_example"))
-print(generate_ucf(globals(), 50, 'P56'))
+print(vhdl(globals(), name="blink_example"))
+print(timing(globals(), 50, 'P56', vendor="Xilinx"))

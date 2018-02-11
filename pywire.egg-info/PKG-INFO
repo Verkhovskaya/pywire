@@ -1,0 +1,50 @@
+Metadata-Version: 1.1
+Name: pywire
+Version: 1.0.0
+Summary: A library for generating VHDL, designed for use in FPGAs
+Home-page: https://github.com/Verkhovskaya/Pywire
+Author: Anna Verkhovskaya
+Author-email: verkhovskaya.anna@gmail.com
+License: UNKNOWN
+Description-Content-Type: UNKNOWN
+Description: pywire is an easy-to-use Python library for generating VHDL, designed for use with FPGAs. 
+        
+        Features:
+        - Simple and complex functions
+        - BRAM
+        - Import components
+        - Generate timing files
+        
+        Does not support:
+        - More than one clock
+        
+        To install:
+        ```python
+        pip install pywire
+        ```
+        
+        Example:
+        ```python
+        from pywire import *
+        
+        x = Signal(1, io=“out”, port=“P7”)
+        y = Signal(1, io=“in”, port=“P42”)
+        
+        def inverter(x):
+        	return 1-x
+        
+        x.drive(inverter, y)
+        print(vhdl(globals()))
+        ```
+        
+        The full documentation can be found at http://pywire.readthedocs.io/en/latest/
+Keywords: vhdl fpga
+Platform: UNKNOWN
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Developers
+Classifier: Topic :: Software Development :: Build Tools
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 2
+Classifier: Programming Language :: Python :: 2.7
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.6

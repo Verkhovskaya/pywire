@@ -43,7 +43,7 @@ class FromText(Component):
 				else:
 					signal_size = int(flat_text[x+3])-int(flat_text[x+5])+1
 			else:
-				raise Exception("Only std_logic and std_logic_vector are supported by Pywire as IO types")
+				raise Exception("Only std_logic and std_logic_vector are supported by pywire as IO types")
 			self.signals[signal_name] = {"size": signal_size, "io": signal_io}
 		header_text = " ".join(flat_text[flat_text.index("port")+2:flat_text.index("end")]).replace(" ; ", ";\n").replace("is ", "is\n").replace("( ", "(").replace(" )", ")").replace(" ;",";")
 		self.header_text = "component " + self.name + " is\n" + header_text + "\nend component;"
