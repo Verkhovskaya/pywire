@@ -1,5 +1,6 @@
 site_name: PyWire
 pages:
+- Index: index.md
 - Basics: basics.md
 - Timing: timing.md
 - BRAM: bram.md
