@@ -1,0 +1,6 @@
+site_name: PyWire
+pages:
+- Basics: basics.md
+- Timing: timing.md
+- BRAM: bram.md
+theme: readthedocs
