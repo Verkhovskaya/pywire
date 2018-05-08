@@ -28,4 +28,4 @@ x.drive(inverter, y)
 print(vhdl(globals()))
 ```
 
-The full documentation can be found at http://pywire.readthedocs.io/en/latest/
+See /examples for more functionality
