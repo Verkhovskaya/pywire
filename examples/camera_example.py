@@ -1,9 +1,13 @@
 from pywire import *
 
 camera_clock = Signal(1, io="out", port="P40")  # 25MHz
-frame_invalid = Signal(1, io="in", port="P26")  # New frame trigger coming from camera. Aka VSYNC
+
+frame_done = Signal(1, io="in", port="P26")  # New frame trigger coming from camera. Aka VSYNC
 line_valid = Signal(1, io="in", port="P34")  # New line trigger coming from camera. AKA HREF
 pixel_clock = Signal(1, io="in", port="P23")  # New pixel trigger coming from camera. AKA PCLK
+pixel_clock_1d = Signal(1)
+
+pixel_clock_1d.drive(_, pixel_clock, clock=True)
 
 # 8 bit RGB data coming from the camera
 new_data = Signal(8, io="in", port=['P9', 'P11', 'P7', 'P14', 'P5', 'P16', 'P2', 'P21'])
@@ -17,10 +21,7 @@ response = Signal(8, io="out", port=["P134", "P133", "P132", "P131", "P127", "P1
 
 
 def halve_frequency(slow_clock):
-	if slow_clock == 1:
-		return 0
-	else:
-		return 1
+	return not slow_clock
 
 
 camera_clock.drive(halve_frequency, args=camera_clock)

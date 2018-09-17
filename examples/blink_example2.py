@@ -10,8 +10,7 @@ def logic(counter, led):
 	else:
 		led1 = 0
 
-
-build(logic, (counter, led1))
+led1.drive(logic, counter)
 
 print(vhdl(globals(), name="blink_example"))
 print(timing(globals(), 50, 'P56', vendor="Xilinx"))
